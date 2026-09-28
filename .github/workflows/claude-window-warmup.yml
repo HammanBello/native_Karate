@@ -16,11 +16,14 @@ on:
     # Douala (WAT) = UTC+1 toute l'année, pas de changement d'heure.
     # Fenêtres de 5h successives dès 06:00. Pas d'appel à 02:00 : la fenêtre
     # 02:00-07:00 empêcherait celle de 06:00 le lendemain.
-    # Le déclenchement GitHub peut être retardé de quelques minutes.
-    - cron: '0 5 * * *'   # 06:00 Douala -> fenêtre 06:00-11:00
-    - cron: '0 10 * * *'  # 11:00 Douala -> fenêtre 11:00-16:00
-    - cron: '0 15 * * *'  # 16:00 Douala -> fenêtre 16:00-21:00
-    - cron: '0 20 * * *'  # 21:00 Douala -> fenêtre 21:00-02:00
+    #
+    # Le cron GitHub part souvent en retard (surtout à l'heure pile) : on le
+    # déclenche 20 min en avance, puis le job attend l'heure cible (voir
+    # TARGETS plus bas). Garder les deux listes synchronisées.
+    - cron: '40 4 * * *'   # cible 06:00 Douala -> fenêtre 06:00-11:00
+    - cron: '40 9 * * *'   # cible 11:00 Douala -> fenêtre 11:00-16:00
+    - cron: '40 14 * * *'  # cible 16:00 Douala -> fenêtre 16:00-21:00
+    - cron: '40 19 * * *'  # cible 21:00 Douala -> fenêtre 21:00-02:00
   workflow_dispatch:
 
 concurrency:
@@ -30,7 +33,7 @@ concurrency:
 jobs:
   warmup:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 60
     steps:
       - uses: actions/setup-node@v4
         with:
@@ -39,12 +42,45 @@ jobs:
       - name: Install Claude Code
         run: npm install -g @anthropic-ai/claude-code
 
-      - name: Ping Claude
+      - name: Wait for target time and ping Claude
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: |
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
             echo "::error::Secret CLAUDE_CODE_OAUTH_TOKEN manquant (générer avec 'claude setup-token')."
             exit 1
           fi
-          claude -p "Réponds uniquement: ok" --model haiku --max-turns 1
+
+          # Cron (UTC) -> heure cible (UTC). Lancement manuel : ping immédiat.
+          case "$SCHEDULE" in
+            '40 4 * * *')  TARGET=05:00 ;;
+            '40 9 * * *')  TARGET=10:00 ;;
+            '40 14 * * *') TARGET=15:00 ;;
+            '40 19 * * *') TARGET=20:00 ;;
+            *)             TARGET= ;;
+          esac
+
+          ping_claude() {
+            echo "Ping à $(date -u +%H:%M:%S) UTC"
+            claude -p "Réponds uniquement: ok" --model haiku --max-turns 1
+          }
+
+          if [ -z "$TARGET" ]; then
+            ping_claude
+            exit 0
+          fi
+
+          # Deux pings : cible +1 min et cible +5 min. Si la fenêtre précédente
+          # a démarré avec un léger retard, le premier tombe encore dedans et
+          # n'a aucun effet ; le second ouvre alors la nouvelle fenêtre.
+          base=$(date -u -d "today $TARGET" +%s)
+          for offset in 1 5; do
+            at=$(( base + offset * 60 ))
+            wait=$(( at - $(date -u +%s) ))
+            if [ "$wait" -gt 0 ]; then
+              echo "Attente de ${wait}s jusqu'à $(date -u -d "@$at" +%H:%M) UTC"
+              sleep "$wait"
+            fi
+            ping_claude
+          done
