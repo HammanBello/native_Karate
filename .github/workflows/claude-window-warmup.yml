@@ -12,9 +12,13 @@ name: Claude 5h window warm-up
 
 on:
   schedule:
-    # Horaires en UTC. 04:00 UTC = 06:00 Paris (heure d'été) / 05:00 (heure d'hiver).
+    # Horaires en UTC, tous les jours (lundi à dimanche).
+    # Heure d'été Paris (UTC+2) : 06:00, 14:00, 19:00.
+    # Heure d'hiver (UTC+1), ces mêmes crons tombent à 05:00, 13:00, 18:00.
     # Le déclenchement GitHub peut être retardé de quelques minutes.
-    - cron: '0 4 * * 1-5'
+    - cron: '0 4 * * *'   # 06:00 Paris -> fenêtre 06:00-11:00
+    - cron: '0 12 * * *'  # 14:00 Paris -> fenêtre 14:00-19:00
+    - cron: '0 17 * * *'  # 19:00 Paris -> fenêtre 19:00-00:00
   workflow_dispatch:
 
 concurrency:
