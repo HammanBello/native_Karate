@@ -11,28 +11,27 @@
 name: Claude 5h window warm-up
 
 on:
+  # Déclencheur principal : cron-job.org appelle l'API GitHub (workflow_dispatch)
+  # à 05:58, 10:58, 15:58 et 20:58 (heure de Douala) avec l'input `target`
+  # (06:00, 11:00, 16:00, 21:00). Le job attend alors l'heure cible.
+  # Fenêtres de 5h successives dès 06:00. Pas d'appel à 02:00 : la fenêtre
+  # 02:00-07:00 empêcherait celle de 06:00 le lendemain.
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Heure cible HH:MM (heure de Douala). Vide = ping immédiat."
+        required: false
+        default: ''
+
+  # Secours : GitHub saute parfois des planifications, mais cron-job.org peut
+  # aussi échouer. 15 min après chaque créneau, un appel immédiat. Si la fenêtre
+  # est déjà ouverte il n'a aucun effet ; sinon il l'ouvre avec ~15 min de
+  # décalage. Horaires en UTC (Douala = UTC+1 toute l'année).
   schedule:
-    # Horaires en UTC, tous les jours (lundi à dimanche).
-    # Douala (WAT) = UTC+1 toute l'année, pas de changement d'heure.
-    # Fenêtres de 5h successives dès 06:00. Pas d'appel à 02:00 : la fenêtre
-    # 02:00-07:00 empêcherait celle de 06:00 le lendemain.
-    #
-    # Le cron GitHub part souvent en retard (surtout à l'heure pile) : on le
-    # déclenche 5 min en avance, puis le job attend l'heure cible (voir
-    # TARGET plus bas). Garder les deux listes synchronisées.
-    - cron: '55 4 * * *'   # cible 06:00 Douala -> fenêtre 06:00-11:00
-    - cron: '55 9 * * *'   # cible 11:00 Douala -> fenêtre 11:00-16:00
-    - cron: '55 14 * * *'  # cible 16:00 Douala -> fenêtre 16:00-21:00
-    - cron: '55 19 * * *'  # cible 21:00 Douala -> fenêtre 21:00-02:00
-    #
-    # Secours : GitHub saute parfois des planifications. 15 min après chaque
-    # créneau, un appel immédiat. Si la fenêtre est déjà ouverte il n'a aucun
-    # effet ; sinon il l'ouvre avec au plus ~15 min de décalage.
     - cron: '15 5 * * *'   # secours 06:15 Douala
     - cron: '15 10 * * *'  # secours 11:15 Douala
     - cron: '15 15 * * *'  # secours 16:15 Douala
     - cron: '15 20 * * *'  # secours 21:15 Douala
-  workflow_dispatch:
 
 concurrency:
   group: claude-window-warmup
@@ -53,25 +52,22 @@ jobs:
       - name: Wait for target time and ping Claude
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          SCHEDULE: ${{ github.event.schedule }}
+          TARGET: ${{ inputs.target }}
         run: |
           if [ -z "$CLAUDE_CODE_OAUTH_TOKEN" ]; then
             echo "::error::Secret CLAUDE_CODE_OAUTH_TOKEN manquant (générer avec 'claude setup-token')."
             exit 1
           fi
 
-          # Cron (UTC) -> heure cible (UTC). Secours et lancement manuel :
-          # ping immédiat.
-          case "$SCHEDULE" in
-            '55 4 * * *')  TARGET=05:00 ;;
-            '55 9 * * *')  TARGET=10:00 ;;
-            '55 14 * * *') TARGET=15:00 ;;
-            '55 19 * * *') TARGET=20:00 ;;
-            *)             TARGET= ;;
-          esac
+          # Heure cible (Douala) fournie par cron-job.org. Vide (secours,
+          # lancement manuel) : ping immédiat.
+          if [ -n "$TARGET" ] && ! [[ "$TARGET" =~ ^([01][0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+            echo "::error::Input target invalide : '$TARGET' (attendu HH:MM)."
+            exit 1
+          fi
 
           ping_claude() {
-            echo "Ping à $(date -u +%H:%M:%S) UTC"
+            echo "Ping à $(TZ=Africa/Douala date +%H:%M:%S) (Douala)"
             claude -p "Réponds uniquement: ok" --model haiku --max-turns 1
           }
 
@@ -83,12 +79,12 @@ jobs:
           # Deux pings : cible +1 min et cible +5 min. Si la fenêtre précédente
           # a démarré avec un léger retard, le premier tombe encore dedans et
           # n'a aucun effet ; le second ouvre alors la nouvelle fenêtre.
-          base=$(date -u -d "today $TARGET" +%s)
+          base=$(TZ=Africa/Douala date -d "today $TARGET" +%s)
           for offset in 1 5; do
             at=$(( base + offset * 60 ))
             wait=$(( at - $(date -u +%s) ))
             if [ "$wait" -gt 0 ]; then
-              echo "Attente de ${wait}s jusqu'à $(date -u -d "@$at" +%H:%M) UTC"
+              echo "Attente de ${wait}s jusqu'à $(TZ=Africa/Douala date -d "@$at" +%H:%M) (Douala)"
               sleep "$wait"
             fi
             ping_claude
