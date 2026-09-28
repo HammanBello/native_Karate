@@ -14,10 +14,13 @@ on:
   schedule:
     # Horaires en UTC, tous les jours (lundi à dimanche).
     # Douala (WAT) = UTC+1 toute l'année, pas de changement d'heure.
+    # Fenêtres de 5h successives dès 06:00. Pas d'appel à 02:00 : la fenêtre
+    # 02:00-07:00 empêcherait celle de 06:00 le lendemain.
     # Le déclenchement GitHub peut être retardé de quelques minutes.
     - cron: '0 5 * * *'   # 06:00 Douala -> fenêtre 06:00-11:00
-    - cron: '0 13 * * *'  # 14:00 Douala -> fenêtre 14:00-19:00
-    - cron: '0 18 * * *'  # 19:00 Douala -> fenêtre 19:00-00:00
+    - cron: '0 10 * * *'  # 11:00 Douala -> fenêtre 11:00-16:00
+    - cron: '0 15 * * *'  # 16:00 Douala -> fenêtre 16:00-21:00
+    - cron: '0 20 * * *'  # 21:00 Douala -> fenêtre 21:00-02:00
   workflow_dispatch:
 
 concurrency:
