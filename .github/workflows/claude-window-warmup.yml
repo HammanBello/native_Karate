@@ -1,7 +1,7 @@
 # Démarre la fenêtre d'usage de 5h de l'abonnement Claude (Pro/Max) avant
 # le début de la journée de travail, via un appel minimal à Claude Code.
 #
-# Exemple : un ping à 06:00 ouvre la fenêtre 06:00-11:00 ; la fenêtre suivante
+# Exemple : un ping à 06:00 (heure de Douala) ouvre la fenêtre 06:00-11:00 ; la fenêtre suivante
 # démarre dès le premier message après 11:00, au lieu d'être bloquée jusqu'à
 # 14:00 si l'on avait commencé à travailler à 09:00.
 #
@@ -13,12 +13,11 @@ name: Claude 5h window warm-up
 on:
   schedule:
     # Horaires en UTC, tous les jours (lundi à dimanche).
-    # Heure d'été Paris (UTC+2) : 06:00, 14:00, 19:00.
-    # Heure d'hiver (UTC+1), ces mêmes crons tombent à 05:00, 13:00, 18:00.
+    # Douala (WAT) = UTC+1 toute l'année, pas de changement d'heure.
     # Le déclenchement GitHub peut être retardé de quelques minutes.
-    - cron: '0 4 * * *'   # 06:00 Paris -> fenêtre 06:00-11:00
-    - cron: '0 12 * * *'  # 14:00 Paris -> fenêtre 14:00-19:00
-    - cron: '0 17 * * *'  # 19:00 Paris -> fenêtre 19:00-00:00
+    - cron: '0 5 * * *'   # 06:00 Douala -> fenêtre 06:00-11:00
+    - cron: '0 13 * * *'  # 14:00 Douala -> fenêtre 14:00-19:00
+    - cron: '0 18 * * *'  # 19:00 Douala -> fenêtre 19:00-00:00
   workflow_dispatch:
 
 concurrency:
