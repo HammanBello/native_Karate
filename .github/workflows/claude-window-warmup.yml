@@ -29,9 +29,9 @@ on:
   # décalage. Horaires en UTC (Douala = UTC+1 toute l'année).
   schedule:
     - cron: '15 5 * * *'   # secours 06:15 Douala
-    - cron: '15 10 * * *'  # secours 11:15 Douala
-    - cron: '15 15 * * *'  # secours 16:15 Douala
-    - cron: '15 20 * * *'  # secours 21:15 Douala
+   # - cron: '15 10 * * *'  # secours 11:15 Douala
+   # - cron: '15 15 * * *'  # secours 16:15 Douala
+   # - cron: '15 20 * * *'  # secours 21:15 Douala
 
 concurrency:
   group: claude-window-warmup
