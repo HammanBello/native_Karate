@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Conso Claude</string>
+    <string name="widget_description">Pourcentage restant de la session de 5h et de la semaine</string>
+</resources>

@@ -1,0 +1,35 @@
+# Construit l'APK du widget Android « Conso Claude » (dossier android-widget/).
+# L'APK est téléchargeable dans l'onglet Actions → exécution → Artifacts.
+name: Android widget APK
+
+on:
+  push:
+    paths:
+      - 'android-widget/**'
+      - '.github/workflows/android-widget.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build APK
+        run: gradle -p android-widget assembleRelease --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conso-claude-apk
+          path: android-widget/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
