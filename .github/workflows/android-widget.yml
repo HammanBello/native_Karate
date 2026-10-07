@@ -1,5 +1,7 @@
 # Construit l'APK du widget Android « Conso Claude » (dossier android-widget/).
-# L'APK est téléchargeable dans l'onglet Actions → exécution → Artifacts.
+# L'APK est publié sur la branche widget-apk (lien direct :
+# https://github.com/HammanBello/native_Karate/raw/widget-apk/conso-claude.apk)
+# et dans l'onglet Actions → exécution → Artifacts.
 name: Android widget APK
 
 on:
@@ -8,6 +10,9 @@ on:
       - 'android-widget/**'
       - '.github/workflows/android-widget.yml'
   workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -33,3 +38,18 @@ jobs:
           name: conso-claude-apk
           path: android-widget/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+
+      - name: Publish APK to branch widget-apk
+        env:
+          TOKEN: ${{ github.token }}
+        run: |
+          apk=$(ls android-widget/app/build/outputs/apk/release/*.apk | head -1)
+          dir=$(mktemp -d)
+          cp "$apk" "$dir/conso-claude.apk"
+          cd "$dir"
+          git init -q -b widget-apk
+          git add conso-claude.apk
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -qm "APK built from ${GITHUB_SHA::7}"
+          git push -f -q "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" widget-apk
