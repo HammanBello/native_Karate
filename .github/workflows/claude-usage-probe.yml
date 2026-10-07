@@ -1,0 +1,62 @@
+# Test : vérifie que le token d'abonnement (CLAUDE_CODE_OAUTH_TOKEN) permet de
+# lire la consommation de la fenêtre de 5h via les en-têtes renvoyés par l'API.
+# Lancement manuel uniquement. Le token n'est jamais affiché.
+#
+# 1. count_tokens : ne fait pas d'inférence ; si les en-têtes y sont présents,
+#    le widget pourra se mettre à jour sans consommer de quota ni ouvrir de fenêtre.
+# 2. messages (max_tokens 1) : mini-appel ; ouvre une fenêtre si aucune n'est ouverte.
+name: Claude usage probe
+
+on:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Read rate-limit headers
+        env:
+          TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Secret CLAUDE_CODE_OAUTH_TOKEN manquant."
+            exit 1
+          fi
+
+          SYSTEM="You are Claude Code, Anthropic's official CLI for Claude."
+          MODEL="claude-haiku-4-5-20251001"
+
+          probe() {
+            local name=$1 path=$2 body=$3
+            echo "================ $name ================"
+            local status
+            status=$(curl -sS -o body.json -D headers.txt -w '%{http_code}' \
+              "https://api.anthropic.com$path" \
+              -H "Authorization: Bearer $TOKEN" \
+              -H "anthropic-version: 2023-06-01" \
+              -H "anthropic-beta: oauth-2025-04-20" \
+              -H "content-type: application/json" \
+              -d "$body")
+            echo "HTTP $status"
+            echo "--- en-têtes rate limit ---"
+            grep -i '^anthropic-ratelimit' headers.txt || echo "(aucun)"
+            if [ "$status" != "200" ]; then
+              echo "--- corps de la réponse ---"
+              cat body.json; echo
+            fi
+            for h in 5h-utilization 5h-reset 5h-status 7d-utilization 7d-reset; do
+              v=$(grep -i "^anthropic-ratelimit-unified-$h:" headers.txt | cut -d' ' -f2- | tr -d '\r')
+              [ -n "$v" ] || continue
+              case $h in
+                *reset) echo "$h = $v -> $(TZ=Africa/Douala date -d "@$v" '+%d/%m %H:%M') (Douala)" ;;
+                *)      echo "$h = $v" ;;
+              esac
+            done
+          }
+
+          probe "count_tokens (sans inférence)" "/v1/messages/count_tokens" \
+            "{\"model\":\"$MODEL\",\"system\":\"$SYSTEM\",\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}"
+
+          probe "messages (max_tokens 1)" "/v1/messages" \
+            "{\"model\":\"$MODEL\",\"max_tokens\":1,\"system\":\"$SYSTEM\",\"messages\":[{\"role\":\"user\",\"content\":\"ok\"}]}"
