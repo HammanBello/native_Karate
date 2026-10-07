@@ -1,10 +1,22 @@
 package com.hamman.consoclaude
 
+import android.annotation.SuppressLint
+import android.content.Context
+import android.os.Handler
+import android.os.Looper
+import android.webkit.CookieManager
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
+import org.json.JSONTokener
 import java.time.OffsetDateTime
+import kotlin.coroutines.resume
 
 /** Une limite : pourcentage utilisé (0-100) et heure de reset (epoch ms, 0 si inconnue). */
 data class Limit(val utilization: Double, val resetsAt: Long)
@@ -18,27 +30,45 @@ class AuthException(message: String) : Exception(message)
  * Lit la consommation via l'API de claude.ai (la même que la page
  * Paramètres → Utilisation), avec le cookie de session du compte.
  * API non documentée : elle peut changer.
+ *
+ * Les requêtes passent par une WebView (vrai moteur Chrome) : claude.ai
+ * refuse (HTTP 403) les requêtes HTTP « brutes » d'une app.
  */
 object UsageApi {
     private const val BASE = "https://claude.ai/api"
-    private const val USER_AGENT =
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-            "(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
 
-    fun fetch(cookie: String, knownOrgId: String?): Pair<String, Usage> {
-        val orgId = knownOrgId ?: findOrgId(cookie)
-        val json = try {
-            JSONObject(get("$BASE/organizations/$orgId/usage", cookie))
-        } catch (e: NotFoundException) {
+    suspend fun fetch(context: Context, cookie: String, knownOrgId: String?): Pair<String, Usage> {
+        installCookie(cookie)
+        val orgId = knownOrgId ?: findOrgId(context)
+        val json = getJson(context, "$BASE/organizations/$orgId/usage") as? JSONObject
+            ?: throw Exception("Réponse inattendue")
+        val error = json.optJSONObject("error")
+        if (error != null) {
             // Organisation changée : on la recherche à nouveau.
-            if (knownOrgId == null) throw e
-            return fetch(cookie, null)
+            if (knownOrgId != null && error.optString("type") == "not_found_error") {
+                return fetch(context, cookie, null)
+            }
+            throw AuthException(error.optString("message", "Accès refusé"))
         }
         return orgId to Usage(parseLimit(json, "five_hour"), parseLimit(json, "seven_day"))
     }
 
-    private fun findOrgId(cookie: String): String {
-        val orgs = JSONArray(get("$BASE/organizations", cookie))
+    /** Clé collée à la main : on la place dans le navigateur intégré. */
+    private fun installCookie(cookie: String) {
+        val key = Regex("sessionKey=([^;\\s]+)").find(cookie)?.groupValues?.get(1) ?: return
+        val manager = CookieManager.getInstance()
+        manager.setAcceptCookie(true)
+        manager.setCookie("https://claude.ai", "sessionKey=$key; Domain=.claude.ai; Path=/; Secure")
+        manager.flush()
+    }
+
+    private suspend fun findOrgId(context: Context): String {
+        val result = getJson(context, "$BASE/organizations")
+        if (result is JSONObject) {
+            val message = result.optJSONObject("error")?.optString("message")
+            throw AuthException(message ?: "Session invalide")
+        }
+        val orgs = result as JSONArray
         if (orgs.length() == 0) throw AuthException("Aucune organisation sur ce compte")
         var fallback: String? = null
         for (i in 0 until orgs.length()) {
@@ -59,27 +89,43 @@ object UsageApi {
         return Limit(obj.getDouble("utilization"), resetsAt)
     }
 
-    private class NotFoundException : Exception()
-
-    private fun get(url: String, cookie: String): String {
-        val conn = URL(url).openConnection() as HttpURLConnection
+    /**
+     * Ouvre l'URL dans une WebView invisible et renvoie le JSON affiché.
+     * Une éventuelle page de vérification anti-robots est franchie
+     * automatiquement : on attend qu'une page contenant du JSON s'affiche.
+     */
+    @SuppressLint("SetJavaScriptEnabled")
+    private suspend fun getJson(context: Context, url: String): Any = withContext(Dispatchers.Main) {
+        var lastTitle = ""
         try {
-            conn.connectTimeout = 15_000
-            conn.readTimeout = 15_000
-            conn.setRequestProperty("Cookie", cookie)
-            conn.setRequestProperty("User-Agent", USER_AGENT)
-            conn.setRequestProperty("Accept", "application/json")
-            conn.setRequestProperty("anthropic-client-platform", "web_claude_ai")
-            val code = conn.responseCode
-            when {
-                code == 401 || code == 403 ->
-                    throw AuthException("Session expirée ou refusée (HTTP $code)")
-                code == 404 -> throw NotFoundException()
-                code !in 200..299 -> throw Exception("HTTP $code")
+            withTimeout(40_000) {
+                suspendCancellableCoroutine { cont ->
+                    val main = Handler(Looper.getMainLooper())
+                    val webView = WebView(context.applicationContext)
+                    webView.settings.javaScriptEnabled = true
+                    webView.settings.domStorageEnabled = true
+                    webView.webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView, pageUrl: String) {
+                            lastTitle = view.title ?: ""
+                            view.evaluateJavascript("document.body ? document.body.innerText : ''") { raw ->
+                                val text = (runCatching { JSONTokener(raw).nextValue() }.getOrNull() as? String)
+                                    ?.trim() ?: return@evaluateJavascript
+                                if (!text.startsWith("{") && !text.startsWith("[")) return@evaluateJavascript
+                                val value = runCatching { JSONTokener(text).nextValue() }.getOrNull()
+                                    ?: return@evaluateJavascript
+                                if (cont.isActive) {
+                                    cont.resume(value)
+                                    main.post { view.destroy() }
+                                }
+                            }
+                        }
+                    }
+                    cont.invokeOnCancellation { main.post { webView.destroy() } }
+                    webView.loadUrl(url)
+                }
             }
-            return conn.inputStream.bufferedReader().use { it.readText() }
-        } finally {
-            conn.disconnect()
+        } catch (e: TimeoutCancellationException) {
+            throw Exception("Pas de réponse de claude.ai (page : « $lastTitle »)")
         }
     }
 }

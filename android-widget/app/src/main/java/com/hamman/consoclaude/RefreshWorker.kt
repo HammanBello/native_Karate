@@ -10,8 +10,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import java.util.concurrent.TimeUnit
 
 class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -49,16 +48,16 @@ class RefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorke
             if (cookie == null) {
                 store.error = "Non connecté — ouvrez l'app"
             } else {
-                withContext(Dispatchers.IO) {
-                    try {
-                        val (orgId, usage) = UsageApi.fetch(cookie, store.orgId)
-                        store.orgId = orgId
-                        store.saveUsage(usage)
-                    } catch (e: AuthException) {
-                        store.error = "${e.message} — reconnectez-vous dans l'app"
-                    } catch (e: Exception) {
-                        store.error = "Erreur : ${e.message ?: e.javaClass.simpleName}"
-                    }
+                try {
+                    val (orgId, usage) = UsageApi.fetch(context, cookie, store.orgId)
+                    store.orgId = orgId
+                    store.saveUsage(usage)
+                } catch (e: AuthException) {
+                    store.error = "${e.message} — reconnectez-vous dans l'app"
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    store.error = "Erreur : ${e.message ?: e.javaClass.simpleName}"
                 }
             }
             UsageWidget.updateAll(context)
